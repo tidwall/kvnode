@@ -21,21 +21,6 @@ import (
 
 var errSyntaxError = errors.New("syntax error")
 
-func now() time.Time {
-	return time.Now()
-}
-
-func makeKey(prefix byte, b []byte) []byte {
-	key := make([]byte, 1+len(b))
-	key[0] = prefix
-	copy(key[1:], b)
-	return key
-}
-
-func fromKey(key []byte) []byte {
-	return key[1:]
-}
-
 func (kvm *Machine) cmdSet(
 	m finn.Applier, conn redcon.Conn, cmd redcon.Command,
 	index uint64,
