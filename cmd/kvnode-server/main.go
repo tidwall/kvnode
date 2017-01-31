@@ -12,12 +12,14 @@ import (
 
 func main() {
 	var addr string
-	var data string
+	var dir string
+	var logdir string
 	var join string
 	var consistency string
 	var durability string
 	flag.StringVar(&addr, "addr", "127.0.0.1:4920", "bind/discoverable ip:port")
-	flag.StringVar(&data, "data", "data", "data directory")
+	flag.StringVar(&dir, "data", "data", "data directory")
+	flag.StringVar(&logdir, "log-dir", "", "log directory. If blank it will equals --data")
 	flag.StringVar(&join, "join", "", "Join a cluster by providing an address")
 	flag.StringVar(&consistency, "consistency", "high", "Consistency (low,medium,high)")
 	flag.StringVar(&durability, "durability", "high", "Durability (low,medium,high)")
@@ -45,7 +47,10 @@ func main() {
 	case "high":
 		ldurability = finn.High
 	}
-	if err := node.ListenAndServe(addr, join, data, lconsistency, ldurability); err != nil {
+	if logdir == "" {
+		logdir = dir
+	}
+	if err := node.ListenAndServe(addr, join, dir, logdir, lconsistency, ldurability); err != nil {
 		log.Warningf("%v", err)
 	}
 }

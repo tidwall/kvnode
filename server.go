@@ -27,7 +27,7 @@ var (
 	log            = redlog.New(os.Stderr)
 )
 
-func ListenAndServe(addr, join, dir string, consistency, durability finn.Level) error {
+func ListenAndServe(addr, join, dir, logdir string, consistency, durability finn.Level) error {
 	var opts finn.Options
 	opts.Backend = finn.FastLog
 	opts.Consistency = consistency
@@ -36,7 +36,7 @@ func ListenAndServe(addr, join, dir string, consistency, durability finn.Level) 
 	if err != nil {
 		return err
 	}
-	n, err := finn.Open(dir, addr, join, m, &opts)
+	n, err := finn.Open(logdir, addr, join, m, &opts)
 	if err != nil {
 		return err
 	}
