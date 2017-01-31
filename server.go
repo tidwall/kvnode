@@ -102,7 +102,9 @@ func (kvm *Machine) Command(
 	case "mget":
 		return kvm.cmdMget(m, conn, cmd)
 	case "del":
-		return kvm.cmdDel(m, conn, cmd)
+		return kvm.cmdDel(m, conn, cmd, false)
+	case "delif":
+		return kvm.cmdDel(m, conn, cmd, true)
 	case "keys":
 		return kvm.cmdKeys(m, conn, cmd)
 	case "flushdb":
@@ -305,9 +307,15 @@ func (kvm *Machine) cmdMget(m finn.Applier, conn redcon.Conn, cmd redcon.Command
 		},
 	)
 }
-func (kvm *Machine) cmdDel(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
-	if len(cmd.Args) < 2 {
+func (kvm *Machine) cmdDel(m finn.Applier, conn redcon.Conn, cmd redcon.Command, delif bool) (interface{}, error) {
+	if (delif && len(cmd.Args) < 3) || len(cmd.Args) < 2 {
 		return nil, finn.ErrWrongNumberOfArguments
+	}
+	var valueif []byte
+	var startIdx = 1
+	if delif {
+		valueif = cmd.Args[1]
+		startIdx = 2
 	}
 	return m.Apply(conn, cmd,
 		func() (interface{}, error) {
@@ -315,9 +323,19 @@ func (kvm *Machine) cmdDel(m finn.Applier, conn redcon.Conn, cmd redcon.Command)
 			defer kvm.mu.Unlock()
 			var batch leveldb.Batch
 			var n int
-			for i := 1; i < len(cmd.Args); i++ {
+			for i := startIdx; i < len(cmd.Args); i++ {
 				key := makeKey('k', cmd.Args[i])
-				has, err := kvm.db.Has(key, nil)
+				var has bool
+				var err error
+				var val []byte
+				if delif {
+					val, err = kvm.db.Get(key, nil)
+					if err == nil {
+						has = bytes.Contains(val, valueif)
+					}
+				} else {
+					has, err = kvm.db.Has(key, nil)
+				}
 				if err != nil && err != leveldb.ErrNotFound {
 					return 0, err
 				} else if has {
