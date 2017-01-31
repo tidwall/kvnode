@@ -40,6 +40,7 @@ func (kvm *Machine) cmdSet(
 	m finn.Applier, conn redcon.Conn, cmd redcon.Command,
 	index uint64,
 ) (interface{}, error) {
+
 	if len(cmd.Args) < 3 {
 		return nil, finn.ErrWrongNumberOfArguments
 	}

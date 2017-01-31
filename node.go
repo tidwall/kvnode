@@ -80,8 +80,10 @@ func (kvm *Machine) Command(
 	case "dump":
 		return kvm.cmdDump(m, conn, cmd)
 	case "listex":
+		// LISTEX limit
 		return kvm.cmdListex(m, conn, cmd)
 	case "delif":
+		// DELIF maxindex key [key ...]
 		return kvm.cmdDelif(m, conn, cmd)
 	case "shutdown":
 		log.Warningf("shutting down")
