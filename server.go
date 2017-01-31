@@ -29,7 +29,7 @@ var (
 
 func ListenAndServe(addr, join, dir, logdir string, consistency, durability finn.Level) error {
 	var opts finn.Options
-	opts.Backend = finn.FastLog
+	opts.Backend = finn.LevelDB
 	opts.Consistency = consistency
 	opts.Durability = durability
 	m, err := NewMachine(dir, addr)
