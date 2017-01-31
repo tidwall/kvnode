@@ -2,31 +2,55 @@ package roam
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	"github.com/tidwall/match"
 	"github.com/tidwall/redcon"
+	"github.com/tidwall/redlog"
 	"github.com/tile38/roam/finn"
 )
 
+var (
+	errSyntaxError = errors.New("syntax error")
+	log            = redlog.New(os.Stderr)
+)
+
+func ListenAndServe(addr, join, dir string) error {
+	var opts finn.Options
+	opts.Backend = finn.FastLog
+	opts.Consistency = finn.High
+	opts.Durability = finn.High
+	m, err := NewMachine(dir, addr)
+	if err != nil {
+		return err
+	}
+	n, err := finn.Open(dir, addr, join, m, &opts)
+	if err != nil {
+		return err
+	}
+	defer n.Close()
+
+	select {
+	// blocking, there's no way out
+	}
+}
+
 type Machine struct {
-	mu     sync.RWMutex // for FlushDB
+	mu     sync.RWMutex
 	dir    string
 	db     *leveldb.DB
-	wo     *opt.WriteOptions
 	opts   *opt.Options
 	dbPath string
 	addr   string
@@ -44,12 +68,10 @@ func NewMachine(dir, addr string) (*Machine, error) {
 		NoSync: true,
 		Filter: filter.NewBloomFilter(10),
 	}
-	kvm.wo = &opt.WriteOptions{Sync: false}
 	kvm.db, err = leveldb.OpenFile(kvm.dbPath, kvm.opts)
 	if err != nil {
 		return nil, err
 	}
-	go kvm.selfManage()
 	return kvm, nil
 }
 
@@ -77,14 +99,6 @@ func (kvm *Machine) Command(
 		return kvm.cmdKeys(m, conn, cmd)
 	case "flushdb":
 		return kvm.cmdFlushdb(m, conn, cmd)
-	case "dump":
-		return kvm.cmdDump(m, conn, cmd)
-	case "listex":
-		// LISTEX limit
-		return kvm.cmdListex(m, conn, cmd)
-	case "delif":
-		// DELIF maxindex key [key ...]
-		return kvm.cmdDelif(m, conn, cmd)
 	case "shutdown":
 		log.Warningf("shutting down")
 		conn.WriteString("OK")
@@ -119,7 +133,7 @@ func (kvm *Machine) Restore(rd io.Reader) error {
 	r := bufio.NewReader(gzr)
 	for {
 		if read > 4*1024*1024 {
-			if err := kvm.db.Write(batch, kvm.wo); err != nil {
+			if err := kvm.db.Write(batch, nil); err != nil {
 				return err
 			}
 			read = 0
@@ -144,7 +158,7 @@ func (kvm *Machine) Restore(rd io.Reader) error {
 		batch.Put(key, value)
 		read += (len(key) + len(value))
 	}
-	if err := kvm.db.Write(batch, kvm.wo); err != nil {
+	if err := kvm.db.Write(batch, nil); err != nil {
 		return err
 	}
 	return gzr.Close()
@@ -184,155 +198,247 @@ func (kvm *Machine) Snapshot(wr io.Writer) error {
 	return iter.Error()
 }
 
-func (kvm *Machine) selfManage() {
-	var fast bool
-	for {
-		if fast {
-			time.Sleep(time.Millisecond)
-		} else {
-			time.Sleep(time.Second / 4)
-		}
-		fast = false
-		ok := func() bool {
-			kvm.mu.RLock()
-			if kvm.closed {
-				kvm.mu.RUnlock()
-				return false
-			}
-			kvm.mu.RUnlock()
-			const K = 1000
-			// ok let's find out if there're any keys that need deleting
-			v, err := do(kvm.addr, "LISTEX", K)
-			if err != nil {
-				errs := err.Error()
-				if errs != "ERR leader not known" &&
-					!strings.HasPrefix(errs, "TRY ") {
-					log.Warningf("%v", err)
-				}
-				return true
-			}
-			ss, ok := v.([]string)
-			if !ok || len(ss) == 0 || len(ss)%2 != 0 {
-				return true
-			}
-			var delargs []interface{}
-			var maxidx uint64
-			delargs = append(delargs, "DELIF", 0)
-			for i := 0; i < len(ss); i += 2 {
-				key := ss[i+0]
-				index, err := strconv.ParseUint(ss[i+1], 10, 64)
-				if err != nil {
-					log.Warningf("%v", err)
-					return true
-				}
-				if index > maxidx {
-					maxidx = index
-				}
-				delargs = append(delargs, key)
-			}
-			delargs[1] = maxidx
-			v, err = do(kvm.addr, delargs...)
-			if err != nil {
-				log.Warningf("delfi failed: %v", err)
-				return true
-			}
-			if s, ok := v.(string); !ok || s != "OK" {
-				log.Warningf("delfi failed: %v", v)
-				return true
-			}
-			if len(ss)/2 >= K {
-				fast = true
-			}
-			return true
-		}()
-		if !ok {
-			return
-		}
+func (kvm *Machine) cmdSet(
+	m finn.Applier, conn redcon.Conn, cmd redcon.Command,
+	index uint64,
+) (interface{}, error) {
+	if len(cmd.Args) != 3 {
+		return nil, finn.ErrWrongNumberOfArguments
 	}
+	return m.Apply(conn, cmd,
+		func() (interface{}, error) {
+			kvm.mu.Lock()
+			defer kvm.mu.Unlock()
+			return nil, kvm.db.Put(makeKey('k', cmd.Args[1]), cmd.Args[2], nil)
+		},
+		func(v interface{}) (interface{}, error) {
+			conn.WriteString("OK")
+			return nil, nil
+		},
+	)
 }
 
-func do(addr string, args ...interface{}) (interface{}, error) {
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		return nil, err
+func (kvm *Machine) cmdGet(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
+	if len(cmd.Args) != 2 {
+		return nil, finn.ErrWrongNumberOfArguments
 	}
-	defer conn.Close()
+	key := makeKey('k', cmd.Args[1])
+	return m.Apply(conn, cmd, nil,
+		func(interface{}) (interface{}, error) {
+			kvm.mu.RLock()
+			defer kvm.mu.RUnlock()
+			value, err := kvm.db.Get(key, nil)
+			if err != nil {
+				if err == leveldb.ErrNotFound {
+					conn.WriteNull()
+					return nil, nil
+				}
+				return nil, err
+			}
+			conn.WriteBulk(value)
+			return nil, nil
+		},
+	)
+}
 
-	var buf []byte
-	buf = append(buf, '*')
-	buf = strconv.AppendInt(buf, int64(len(args)), 10)
-	buf = append(buf, '\r', '\n')
-	for _, arg := range args {
-		args := fmt.Sprintf("%v", arg)
-		buf = append(buf, '$')
-		buf = strconv.AppendInt(buf, int64(len(args)), 10)
-		buf = append(buf, '\r', '\n')
-		buf = append(buf, args...)
-		buf = append(buf, '\r', '\n')
+func (kvm *Machine) cmdDel(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
+	if len(cmd.Args) < 2 {
+		return nil, finn.ErrWrongNumberOfArguments
 	}
-	if _, err := conn.Write(buf); err != nil {
-		return nil, err
+	return m.Apply(conn, cmd,
+		func() (interface{}, error) {
+			kvm.mu.Lock()
+			defer kvm.mu.Unlock()
+			var batch leveldb.Batch
+			var n int
+			for i := 1; i < len(cmd.Args); i++ {
+				key := makeKey('k', cmd.Args[i])
+				has, err := kvm.db.Has(key, nil)
+				if err != nil && err != leveldb.ErrNotFound {
+					return 0, err
+				} else if has {
+					n++
+					batch.Delete(key)
+				}
+			}
+			if err := kvm.db.Write(&batch, nil); err != nil {
+				return nil, err
+			}
+			return n, nil
+		},
+		func(v interface{}) (interface{}, error) {
+			n := v.(int)
+			conn.WriteInt(n)
+			return nil, nil
+		},
+	)
+}
+
+func (kvm *Machine) cmdKeys(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
+	if len(cmd.Args) < 2 {
+		return nil, finn.ErrWrongNumberOfArguments
 	}
-	rd := bufio.NewReader(conn)
-	c, err := rd.ReadByte()
-	if err != nil {
-		return nil, err
+	var withvalues bool
+	var pivot []byte
+	var usingPivot bool
+	var desc bool
+	limit := 500
+	for i := 2; i < len(cmd.Args); i++ {
+		switch strings.ToLower(string(cmd.Args[i])) {
+		default:
+			return nil, errSyntaxError
+		case "withvalues":
+			withvalues = true
+		case "desc":
+			desc = true
+		case "pivot":
+			i++
+			if i == len(cmd.Args) {
+				return nil, errSyntaxError
+			}
+			pivot = makeKey('k', cmd.Args[i])
+			usingPivot = true
+		case "limit":
+			i++
+			if i == len(cmd.Args) {
+				return nil, errSyntaxError
+			}
+			n, err := strconv.ParseInt(string(cmd.Args[i]), 10, 64)
+			if err != nil || n < 0 {
+				return nil, errSyntaxError
+			}
+			limit = int(n)
+		}
 	}
-	l, err := rd.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	s := strings.TrimSpace(l)
-	if c == '-' {
-		return nil, errors.New(s)
-	} else if c == '+' {
-		return s, nil
-	} else if c == '$' {
-		n, err := strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		data := make([]byte, int(n)+2)
-		if _, err := io.ReadFull(rd, data); err != nil {
-			return nil, err
-		}
-		if data[len(data)-2] != '\r' || data[len(data)-1] != '\n' {
-			return nil, errors.New("invalid line ending")
-		}
-		return string(data[:len(data)-2]), nil
-	} else if c == '*' {
-		n, err := strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		var res []string
-		for i := 0; i < int(n); i++ {
-			c, err := rd.ReadByte()
+	pattern := makeKey('k', cmd.Args[1])
+	spattern := string(pattern)
+	min, max := match.Allowable(spattern)
+	bmin := []byte(min)
+	bmax := []byte(max)
+	return m.Apply(conn, cmd, nil,
+		func(interface{}) (interface{}, error) {
+			kvm.mu.RLock()
+			defer kvm.mu.RUnlock()
+			var keys [][]byte
+			var values [][]byte
+			iter := kvm.db.NewIterator(nil, nil)
+			var ok bool
+			if desc {
+				if usingPivot && bytes.Compare(pivot, bmax) < 0 {
+					bmax = pivot
+				}
+				ok = iter.Seek(bmax)
+				if !ok {
+					ok = iter.Last()
+				}
+			} else {
+				if usingPivot && bytes.Compare(pivot, bmin) > 0 {
+					bmin = pivot
+				}
+				ok = iter.Seek(bmin)
+			}
+			step := func() bool {
+				if desc {
+					return iter.Prev()
+				} else {
+					return iter.Next()
+				}
+			}
+			var inRange bool
+			for ; ok; ok = step() {
+				if len(keys) == limit {
+					break
+				}
+				rkey := iter.Key()
+				if desc {
+					if !inRange {
+						if bytes.Compare(rkey, bmax) >= 0 {
+							continue
+						}
+						inRange = true
+					}
+					if bytes.Compare(rkey, bmin) < 0 {
+						break
+					}
+				} else {
+					if !inRange {
+						if usingPivot {
+							if bytes.Compare(rkey, bmin) <= 0 {
+								continue
+							}
+						}
+						inRange = true
+					}
+					if bytes.Compare(rkey, bmax) >= 0 {
+						break
+					}
+				}
+				skey := string(rkey)
+				if !match.Match(skey, spattern) {
+					continue
+				}
+				keys = append(keys, bcopy(rkey[1:]))
+				if withvalues {
+					values = append(values, bcopy(iter.Value()))
+				}
+			}
+			iter.Release()
+			err := iter.Error()
 			if err != nil {
 				return nil, err
 			}
-			l, err := rd.ReadString('\n')
-			if err != nil {
-				return nil, err
+			if withvalues {
+				conn.WriteArray(len(keys) * 2)
+			} else {
+				conn.WriteArray(len(keys))
 			}
-			if c != '$' {
-				return nil, errors.New("invalid character")
+			for i := 0; i < len(keys); i++ {
+				conn.WriteBulk(keys[i])
+				if withvalues {
+					conn.WriteBulk(values[i])
+				}
 			}
-			s := strings.TrimSpace(l)
-			n, err := strconv.ParseUint(s, 10, 64)
-			if err != nil {
-				return nil, err
-			}
-			data := make([]byte, int(n)+2)
-			if _, err := io.ReadFull(rd, data); err != nil {
-				return nil, err
-			}
-			if data[len(data)-2] != '\r' || data[len(data)-1] != '\n' {
-				return nil, errors.New("invalid line ending")
-			}
-			res = append(res, string(data[:len(data)-2]))
-		}
-		return res, nil
+			return nil, nil
+		},
+	)
+}
+
+func (kvm *Machine) cmdFlushdb(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
+	if len(cmd.Args) != 1 {
+		return nil, finn.ErrWrongNumberOfArguments
 	}
-	return nil, nil
+	return m.Apply(conn, cmd,
+		func() (interface{}, error) {
+			kvm.mu.Lock()
+			defer kvm.mu.Unlock()
+			if err := kvm.db.Close(); err != nil {
+				panic(err.Error())
+			}
+			if err := os.RemoveAll(kvm.dbPath); err != nil {
+				panic(err.Error())
+			}
+			var err error
+			kvm.db, err = leveldb.OpenFile(kvm.dbPath, kvm.opts)
+			if err != nil {
+				panic(err.Error())
+			}
+			return nil, nil
+		},
+		func(v interface{}) (interface{}, error) {
+			conn.WriteString("OK")
+			return nil, nil
+		},
+	)
+}
+func makeKey(prefix byte, b []byte) []byte {
+	key := make([]byte, 1+len(b))
+	key[0] = prefix
+	copy(key[1:], b)
+	return key
+}
+
+func bcopy(b []byte) []byte {
+	r := make([]byte, len(b))
+	copy(r, b)
+	return r
 }
