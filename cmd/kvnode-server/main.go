@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/tidwall/redlog"
-	"github.com/tile38/roam"
+	"github.com/tile38/kvnode"
 )
 
 func main() {
@@ -19,7 +19,7 @@ func main() {
 	flag.Parse()
 	var log = redlog.New(os.Stderr)
 	addr := fmt.Sprintf(":%d", port)
-	if err := roam.ListenAndServe(addr, join, data); err != nil {
+	if err := node.ListenAndServe(addr, join, data); err != nil {
 		log.Warningf("%v", err)
 	}
 }

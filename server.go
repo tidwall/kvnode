@@ -1,4 +1,4 @@
-package roam
+package node
 
 import (
 	"bufio"
@@ -16,10 +16,10 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	"github.com/tidwall/finn"
 	"github.com/tidwall/match"
 	"github.com/tidwall/redcon"
 	"github.com/tidwall/redlog"
-	"github.com/tile38/roam/finn"
 )
 
 var (
@@ -84,13 +84,13 @@ func (kvm *Machine) Close() error {
 }
 
 func (kvm *Machine) Command(
-	m finn.Applier, conn redcon.Conn, cmd redcon.Command, index uint64,
+	m finn.Applier, conn redcon.Conn, cmd redcon.Command,
 ) (interface{}, error) {
 	switch strings.ToLower(string(cmd.Args[0])) {
 	default:
 		return nil, finn.ErrUnknownCommand
 	case "set":
-		return kvm.cmdSet(m, conn, cmd, index)
+		return kvm.cmdSet(m, conn, cmd)
 	case "get":
 		return kvm.cmdGet(m, conn, cmd)
 	case "del":
@@ -200,7 +200,6 @@ func (kvm *Machine) Snapshot(wr io.Writer) error {
 
 func (kvm *Machine) cmdSet(
 	m finn.Applier, conn redcon.Conn, cmd redcon.Command,
-	index uint64,
 ) (interface{}, error) {
 	if len(cmd.Args) != 3 {
 		return nil, finn.ErrWrongNumberOfArguments
