@@ -27,11 +27,11 @@ var (
 	log            = redlog.New(os.Stderr)
 )
 
-func ListenAndServe(addr, join, dir string) error {
+func ListenAndServe(addr, join, dir string, consistency, durability finn.Level) error {
 	var opts finn.Options
 	opts.Backend = finn.FastLog
-	opts.Consistency = finn.High
-	opts.Durability = finn.High
+	opts.Consistency = consistency
+	opts.Durability = durability
 	m, err := NewMachine(dir, addr)
 	if err != nil {
 		return err
