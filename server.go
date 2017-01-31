@@ -27,9 +27,13 @@ var (
 	log            = redlog.New(os.Stderr)
 )
 
-func ListenAndServe(addr, join, dir, logdir string, consistency, durability finn.Level) error {
+func ListenAndServe(addr, join, dir, logdir string, fastlog bool, consistency, durability finn.Level) error {
 	var opts finn.Options
-	opts.Backend = finn.LevelDB
+	if fastlog {
+		opts.Backend = finn.LevelDB
+	} else {
+		opts.Backend = finn.FastLog
+	}
 	opts.Consistency = consistency
 	opts.Durability = durability
 	m, err := NewMachine(dir, addr)

@@ -17,6 +17,8 @@ func main() {
 	var join string
 	var consistency string
 	var durability string
+	var fastlog bool
+	flag.BoolVar(&fastlog, "fastlog", false, "use FastLog as the raftlog")
 	flag.StringVar(&addr, "addr", "127.0.0.1:4920", "bind/discoverable ip:port")
 	flag.StringVar(&dir, "data", "data", "data directory")
 	flag.StringVar(&logdir, "log-dir", "", "log directory. If blank it will equals --data")
@@ -50,7 +52,7 @@ func main() {
 	if logdir == "" {
 		logdir = dir
 	}
-	if err := node.ListenAndServe(addr, join, dir, logdir, lconsistency, ldurability); err != nil {
+	if err := node.ListenAndServe(addr, join, dir, logdir, fastlog, lconsistency, ldurability); err != nil {
 		log.Warningf("%v", err)
 	}
 }
