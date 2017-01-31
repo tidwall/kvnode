@@ -13,6 +13,8 @@ SET key value
 GET key
 DEL key [key ...]
 KEYS pattern [PIVOT prefix] [LIMIT count] [DESC]
+MSET key value [key value ...]
+MGET key [key ...]
 FLUSHDB
 SHUTDOWN
 ```

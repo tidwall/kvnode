@@ -95,8 +95,12 @@ func (kvm *Machine) Command(
 		return nil, finn.ErrUnknownCommand
 	case "set":
 		return kvm.cmdSet(m, conn, cmd)
+	case "mset":
+		return kvm.cmdMset(m, conn, cmd)
 	case "get":
 		return kvm.cmdGet(m, conn, cmd)
+	case "mget":
+		return kvm.cmdMget(m, conn, cmd)
 	case "del":
 		return kvm.cmdDel(m, conn, cmd)
 	case "keys":
@@ -221,6 +225,29 @@ func (kvm *Machine) cmdSet(
 	)
 }
 
+func (kvm *Machine) cmdMset(
+	m finn.Applier, conn redcon.Conn, cmd redcon.Command,
+) (interface{}, error) {
+	if len(cmd.Args) < 3 || (len(cmd.Args)-1)%2 == 1 {
+		return nil, finn.ErrWrongNumberOfArguments
+	}
+	return m.Apply(conn, cmd,
+		func() (interface{}, error) {
+			kvm.mu.Lock()
+			defer kvm.mu.Unlock()
+			var batch leveldb.Batch
+			for i := 1; i < len(cmd.Args); i += 2 {
+				batch.Put(makeKey('k', cmd.Args[i]), cmd.Args[i+1])
+			}
+			return nil, kvm.db.Write(&batch, nil)
+		},
+		func(v interface{}) (interface{}, error) {
+			conn.WriteString("OK")
+			return nil, nil
+		},
+	)
+}
+
 func (kvm *Machine) cmdGet(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
 	if len(cmd.Args) != 2 {
 		return nil, finn.ErrWrongNumberOfArguments
@@ -244,6 +271,40 @@ func (kvm *Machine) cmdGet(m finn.Applier, conn redcon.Conn, cmd redcon.Command)
 	)
 }
 
+func (kvm *Machine) cmdMget(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
+	if len(cmd.Args) < 2 {
+		return nil, finn.ErrWrongNumberOfArguments
+	}
+	return m.Apply(conn, cmd, nil,
+		func(interface{}) (interface{}, error) {
+			kvm.mu.RLock()
+			defer kvm.mu.RUnlock()
+			var values [][]byte
+			for i := 1; i < len(cmd.Args); i++ {
+				key := makeKey('k', cmd.Args[i])
+				value, err := kvm.db.Get(key, nil)
+				if err != nil {
+					if err == leveldb.ErrNotFound {
+						values = append(values, nil)
+					} else {
+						return nil, err
+					}
+				} else {
+					values = append(values, bcopy(value))
+				}
+			}
+			conn.WriteArray(len(values))
+			for _, v := range values {
+				if v == nil {
+					conn.WriteNull()
+				} else {
+					conn.WriteBulk(v)
+				}
+			}
+			return nil, nil
+		},
+	)
+}
 func (kvm *Machine) cmdDel(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
 	if len(cmd.Args) < 2 {
 		return nil, finn.ErrWrongNumberOfArguments
