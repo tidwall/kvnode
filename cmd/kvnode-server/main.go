@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/tidwall/finn"
+	"github.com/tidwall/kvnode"
 	"github.com/tidwall/redlog"
-	"github.com/tile38/kvnode"
 )
 
 func main() {
