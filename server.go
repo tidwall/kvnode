@@ -7,11 +7,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/filter"
@@ -21,6 +23,8 @@ import (
 	"github.com/tidwall/redcon"
 	"github.com/tidwall/redlog"
 )
+
+const defaultTCPKeepAlive = time.Minute * 5
 
 var (
 	errSyntaxError = errors.New("syntax error")
@@ -36,6 +40,21 @@ func ListenAndServe(addr, join, dir, logdir string, fastlog bool, consistency, d
 	}
 	opts.Consistency = consistency
 	opts.Durability = durability
+	opts.ConnAccept = func(conn redcon.Conn) bool {
+		if tcp, ok := conn.NetConn().(*net.TCPConn); ok {
+			if err := tcp.SetKeepAlive(true); err != nil {
+				log.Warningf("could not set keepalive: %s",
+					tcp.RemoteAddr().String())
+			} else {
+				err := tcp.SetKeepAlivePeriod(defaultTCPKeepAlive)
+				if err != nil {
+					log.Warningf("could not set keepalive period: %s",
+						tcp.RemoteAddr().String())
+				}
+			}
+		}
+		return true
+	}
 	m, err := NewMachine(dir, addr)
 	if err != nil {
 		return err
