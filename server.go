@@ -122,6 +122,8 @@ func (kvm *Machine) Command(
 		return kvm.cmdMget(m, conn, cmd)
 	case "del":
 		return kvm.cmdDel(m, conn, cmd, false)
+	case "pdel":
+		return kvm.cmdPdel(m, conn, cmd, false)
 	case "delif":
 		return kvm.cmdDel(m, conn, cmd, true)
 	case "keys":
@@ -375,6 +377,56 @@ func (kvm *Machine) cmdDel(m finn.Applier, conn redcon.Conn, cmd redcon.Command,
 	)
 }
 
+func (kvm *Machine) cmdPdel(m finn.Applier, conn redcon.Conn, cmd redcon.Command, delif bool) (interface{}, error) {
+	if len(cmd.Args) != 2 {
+		return nil, finn.ErrWrongNumberOfArguments
+	}
+	pattern := makeKey('k', cmd.Args[1])
+	spattern := string(pattern)
+	min, max := match.Allowable(spattern)
+	bmin := []byte(min)
+	bmax := []byte(max)
+
+	return m.Apply(conn, cmd,
+		func() (interface{}, error) {
+			kvm.mu.Lock()
+			defer kvm.mu.Unlock()
+
+			var keys [][]byte
+			iter := kvm.db.NewIterator(nil, nil)
+			for ok := iter.Seek(bmin); ok; ok = iter.Next() {
+				rkey := iter.Key()
+				if bytes.Compare(rkey, bmax) >= 0 {
+					break
+				}
+				skey := string(rkey)
+				if !match.Match(skey, spattern) {
+					continue
+				}
+				keys = append(keys, bcopy(rkey))
+			}
+			iter.Release()
+			err := iter.Error()
+			if err != nil {
+				return nil, err
+			}
+
+			var batch leveldb.Batch
+			for _, key := range keys {
+				batch.Delete(key)
+			}
+			if err := kvm.db.Write(&batch, nil); err != nil {
+				return nil, err
+			}
+			return len(keys), nil
+		},
+		func(v interface{}) (interface{}, error) {
+			n := v.(int)
+			conn.WriteInt(n)
+			return nil, nil
+		},
+	)
+}
 func (kvm *Machine) cmdKeys(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
 	if len(cmd.Args) < 2 {
 		return nil, finn.ErrWrongNumberOfArguments

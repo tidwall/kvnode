@@ -12,6 +12,7 @@ Commands:
 SET key value
 GET key
 DEL key [key ...]
+PDEL pattern
 KEYS pattern [PIVOT prefix] [LIMIT count] [DESC]
 MSET key value [key value ...]
 MGET key [key ...]
