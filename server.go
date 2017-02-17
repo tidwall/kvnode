@@ -583,6 +583,7 @@ func (kvm *Machine) cmdFlushdb(m finn.Applier, conn redcon.Conn, cmd redcon.Comm
 		},
 	)
 }
+
 func makeKey(prefix byte, b []byte) []byte {
 	key := make([]byte, 1+len(b))
 	key[0] = prefix

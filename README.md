@@ -13,7 +13,7 @@ SET key value
 GET key
 DEL key [key ...]
 PDEL pattern
-KEYS pattern [PIVOT prefix] [LIMIT count] [DESC]
+KEYS pattern [PIVOT prefix] [LIMIT count] [DESC] [WITHVALUES]
 MSET key value [key value ...]
 MGET key [key ...]
 FLUSHDB
