@@ -1,10 +1,11 @@
 # kvnode
 
-Very simple key value store.
+Minimal Key/Value store with basic Redis support. 
 
 - Redis API
-- LevelDB storage
-- Raft support with [Finn](https://github.com/tidwall/finn) commands.
+- LevelDB disk-based storage
+- Raft support with [Finn](https://github.com/tidwall/finn) commands
+- Compatible with existing Redis clients
 
 Commands:
 
@@ -19,6 +20,25 @@ MGET key [key ...]
 FLUSHDB
 SHUTDOWN
 ```
+
+## Key scanning
+
+The `KEYS` command returns data in order of the key. 
+The `PIVOT` keyword allows for efficient paging.
+For example:
+```
+redis> MSET key1 1 key2 2 key3 3 key4 4
+OK
+redis> KEYS * LIMIT 2
+1) "key1"
+2) "key2"
+redis> KEYS * PIVOT key2 LIMIT 2
+1) "key3"
+2) "key4"
+```
+
+The `PDEL` commands will delete all items matching the specified pattern.
+
 
 ## Backup and Restore
 
@@ -40,7 +60,7 @@ To restore:
 
 Example:
 ```
-kvnode-server --parse-snapshot state.bin | redis-cli -h 10.0.1.5 -p 4920
+kvnode-server --parse-snapshot state.bin | redis-cli -h 10.0.1.5 -p 4920 --pipe
 ```
 
 This will execute all of the `state.bin` commands on the leader at `10.0.1.5:4920`

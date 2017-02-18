@@ -111,7 +111,10 @@ func (kvm *Machine) Command(
 ) (interface{}, error) {
 	switch strings.ToLower(string(cmd.Args[0])) {
 	default:
+		log.Warningf("unknown command: %s\n", cmd.Args[0])
 		return nil, finn.ErrUnknownCommand
+	case "echo":
+		return kvm.cmdEcho(m, conn, cmd)
 	case "set":
 		return kvm.cmdSet(m, conn, cmd)
 	case "mset":
@@ -235,6 +238,11 @@ func WriteRedisCommandsFromSnapshot(wr io.Writer, snapshotPath string) error {
 		if _, err := io.ReadFull(r, value); err != nil {
 			return err
 		}
+		if len(key) == 0 || key[0] != 'k' {
+			// do not accept keys that do not start with 'k'
+			continue
+		}
+		key = key[1:]
 		cmd = cmd[:0]
 		cmd = append(cmd, "*3\r\n$3\r\nSET\r\n$"...)
 		cmd = strconv.AppendInt(cmd, int64(len(key)), 10)
@@ -330,6 +338,13 @@ func (kvm *Machine) cmdMset(
 	)
 }
 
+func (kvm *Machine) cmdEcho(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
+	if len(cmd.Args) != 2 {
+		return nil, finn.ErrWrongNumberOfArguments
+	}
+	conn.WriteBulk(cmd.Args[1])
+	return nil, nil
+}
 func (kvm *Machine) cmdGet(m finn.Applier, conn redcon.Conn, cmd redcon.Command) (interface{}, error) {
 	if len(cmd.Args) != 2 {
 		return nil, finn.ErrWrongNumberOfArguments
