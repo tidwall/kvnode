@@ -36,7 +36,7 @@ Ideally you call `RAFTSNAPSHOT` and then store the state.bin on some other serve
 To restore:
 - Create a new raft cluster
 - Download the state.bin snapshot
-- Pipe the commands using the `kvnode-server --parse-snapshot` and `redis-cli` commands
+- Pipe the commands using the `kvnode-server --parse-snapshot` and `redis-cli --pipe` commands
 
 Example:
 ```
@@ -45,6 +45,8 @@ kvnode-server --parse-snapshot state.bin | redis-cli -h 10.0.1.5 -p 4920
 
 This will execute all of the `state.bin` commands on the leader at `10.0.1.5:4920`
 
+
+For information on the `redis-cli --pipe` command see [Redis Mass Insert](https://redis.io/topics/mass-insert).
 
 ## Contact
 Josh Baker [@tidwall](http://twitter.com/tidwall)
