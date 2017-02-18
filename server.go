@@ -1,4 +1,4 @@
-package node
+package kvnode
 
 import (
 	"bufio"
@@ -193,6 +193,65 @@ func (kvm *Machine) Restore(rd io.Reader) error {
 		return err
 	}
 	return gzr.Close()
+}
+
+// WriteRedisCommandsFromSnapshot will read a snapshot and write all the
+// Redis SET commands needed to rebuild the entire database.
+// The commands are written to wr.
+func WriteRedisCommandsFromSnapshot(wr io.Writer, snapshotPath string) error {
+	f, err := os.Open(snapshotPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var cmd []byte
+	num := make([]byte, 8)
+	var gzclosed bool
+	gzr, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if !gzclosed {
+			gzr.Close()
+		}
+	}()
+	r := bufio.NewReader(gzr)
+	for {
+		if _, err := io.ReadFull(r, num); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		key := make([]byte, int(binary.LittleEndian.Uint64(num)))
+		if _, err := io.ReadFull(r, key); err != nil {
+			return err
+		}
+		if _, err := io.ReadFull(r, num); err != nil {
+			return err
+		}
+		value := make([]byte, int(binary.LittleEndian.Uint64(num)))
+		if _, err := io.ReadFull(r, value); err != nil {
+			return err
+		}
+		cmd = cmd[:0]
+		cmd = append(cmd, "*3\r\n$3\r\nSET\r\n$"...)
+		cmd = strconv.AppendInt(cmd, int64(len(key)), 10)
+		cmd = append(cmd, '\r', '\n')
+		cmd = append(cmd, key...)
+		cmd = append(cmd, '\r', '\n', '$')
+		cmd = strconv.AppendInt(cmd, int64(len(value)), 10)
+		cmd = append(cmd, '\r', '\n')
+		cmd = append(cmd, value...)
+		cmd = append(cmd, '\r', '\n')
+		if _, err := wr.Write(cmd); err != nil {
+			return err
+		}
+	}
+	err = gzr.Close()
+	gzclosed = true
+	return err
 }
 
 func (kvm *Machine) Snapshot(wr io.Writer) error {

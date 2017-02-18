@@ -18,6 +18,7 @@ func main() {
 	var consistency string
 	var durability string
 	var fastlog bool
+	var parseSnapshot string
 	flag.BoolVar(&fastlog, "fastlog", false, "use FastLog as the raftlog")
 	flag.StringVar(&addr, "addr", "127.0.0.1:4920", "bind/discoverable ip:port")
 	flag.StringVar(&dir, "data", "data", "data directory")
@@ -25,8 +26,17 @@ func main() {
 	flag.StringVar(&join, "join", "", "Join a cluster by providing an address")
 	flag.StringVar(&consistency, "consistency", "high", "Consistency (low,medium,high)")
 	flag.StringVar(&durability, "durability", "high", "Durability (low,medium,high)")
+	flag.StringVar(&parseSnapshot, "parse-snapshot", "", "Parse and output a snapshot to Redis format")
 	flag.Parse()
 	var log = redlog.New(os.Stderr)
+	if parseSnapshot != "" {
+		err := kvnode.WriteRedisCommandsFromSnapshot(os.Stdout, parseSnapshot)
+		if err != nil {
+			log.Warningf("%v", err)
+			os.Exit(1)
+		}
+		return
+	}
 	var lconsistency finn.Level
 	switch strings.ToLower(consistency) {
 	default:
@@ -52,7 +62,7 @@ func main() {
 	if logdir == "" {
 		logdir = dir
 	}
-	if err := node.ListenAndServe(addr, join, dir, logdir, fastlog, lconsistency, ldurability); err != nil {
+	if err := kvnode.ListenAndServe(addr, join, dir, logdir, fastlog, lconsistency, ldurability); err != nil {
 		log.Warningf("%v", err)
 	}
 }
