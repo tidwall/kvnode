@@ -23,7 +23,7 @@ SHUTDOWN
 
 ## Key scanning
 
-The `KEYS` command returns keys and values in order in order or key. 
+The `KEYS` command returns keys and values, ordered by keys. 
 The `PIVOT` keyword allows for efficient paging.
 For example:
 ```
