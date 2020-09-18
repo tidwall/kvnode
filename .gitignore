@@ -1,2 +1,3 @@
-kvnode-server*
-data*
+kvnode*
+!kvnode/
+data/
